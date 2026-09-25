@@ -1,6 +1,7 @@
+import os
 import time
+from concurrent.futures import Future, ProcessPoolExecutor
 from hashlib import sha256
-from itertools import product
 
 
 PASSWORDS_TO_BRUTE_FORCE = [
@@ -21,19 +22,58 @@ def sha256_hash_str(to_hash: str) -> str:
     return sha256(to_hash.encode("utf-8")).hexdigest()
 
 
-def brute_force_password() -> None:
-    password_hashes = set(PASSWORDS_TO_BRUTE_FORCE)
+def brute_force_chunk(
+    start: int,
+    end: int,
+    password_hashes: set[str],
+) -> list[str]:
+    found_passwords: list[str] = []
 
-    for combination in product("0123456789", repeat=8):
-        password = "".join(combination)
+    for number in range(start, end):
+        password = f"{number:08d}"
         password_hash = sha256_hash_str(password)
 
         if password_hash in password_hashes:
-            print(password)
-            password_hashes.remove(password_hash)
+            found_passwords.append(password)
 
-            if not password_hashes:
-                break
+    return found_passwords
+
+
+def brute_force_password() -> None:
+    password_hashes = set(PASSWORDS_TO_BRUTE_FORCE)
+
+    total = 100_000_000
+    cpu_count = os.cpu_count() or 1
+    chunk_size, remainder = divmod(total, cpu_count)
+
+    futures: list[Future[list[str]]] = []
+
+
+    with ProcessPoolExecutor(max_workers=cpu_count) as executor:
+        for worker_id in range(cpu_count):
+            start = worker_id * chunk_size
+            end = start + chunk_size
+
+            if worker_id == cpu_count - 1:
+                end += remainder
+
+            future = executor.submit(
+                brute_force_chunk,
+                start,
+                end,
+                password_hashes,
+            )
+
+            futures.append(future)
+
+    found_passwords: list[str] = []
+
+    for future in futures:
+        result = future.result()
+        found_passwords.extend(result)
+
+    for password in sorted(found_passwords):
+        print(password)
 
 
 if __name__ == "__main__":
